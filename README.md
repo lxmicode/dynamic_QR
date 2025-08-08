@@ -415,3 +415,64 @@ curl -X PUT http://localhost:8080/api/codes/a1b2c3d4 \
 - 将 BASE_URL 设置成你的外网域名（与二维码内编码一致）。
 
 需要我帮你把这一套做成 GitHub 仓库（含 Actions 自动构建镜像/推送 GHCR/Docker Hub）吗？也可以顺手加上简单的前端后台页。
+
+
+对的，.env.example 只是模板，不会被程序自动读取。你需要把它“复制为 .env”，再由运行方式（docker compose / docker run / 本地命令行）把变量传进容器或进程。
+
+常用做法有三种：
+
+方案 A：Docker Compose（推荐）
+- 步骤
+  1) 复制模板
+     cp .env.example .env
+  2) 编辑 .env，填上你的域名和强口令
+  3) 启动
+     docker compose up -d --build
+
+- 说明
+  - docker compose 会在 compose.yml 所在目录自动加载 .env，用于替换 compose.yml 里的 ${BASE_URL}、${ADMIN_TOKEN}，然后通过 environment 块传进容器。
+  - 你可以用命令查看最终生效配置：
+    docker compose config
+  - 也可验证容器内环境变量：
+    docker compose exec live-qr env | egrep 'BASE_URL|ADMIN_TOKEN|DB_PATH'
+
+- 可选：显式使用 env_file
+  如果你更喜欢把 .env 直接注入容器（而不仅用于变量替换），可在 compose.yml 中加：
+  services:
+    live-qr:
+      env_file:
+        - .env
+      environment:
+        DB_PATH: /data/codes.db
+  这样 BASE_URL、ADMIN_TOKEN 将来自 .env 注入，DB_PATH 用显式值或 Dockerfile 里默认的 /data/codes.db。
+
+方案 B：docker run 直接传
+- 不使用 compose 时，需用 -e 明确传入：
+  docker run -d --name live-qr \
+    -p 8080:8000 \
+    -v $(pwd)/data:/data \
+    -e BASE_URL=https://q.example.com \
+    -e ADMIN_TOKEN=your-strong-token \
+    -e DB_PATH=/data/codes.db \
+    live-qr:latest
+
+方案 C：本地直接跑 uvicorn
+- .env 不会被 Python 自动加载（除非你使用 python-dotenv）
+- 方式 1：用 shell 导出环境变量
+  export BASE_URL=https://q.example.com
+  export ADMIN_TOKEN=your-strong-token
+  export DB_PATH=./codes.db
+  uvicorn app.main:app --host 0.0.0.0 --port 8000
+- 方式 2（可选）：使用 python-dotenv 自动加载 .env
+  - 安装：pip install python-dotenv
+  - 在 app/main.py 顶部加入：
+    from dotenv import load_dotenv
+    load_dotenv()
+  - 这样在项目根目录放 .env 即可被读取（同时也兼容 Docker 的做法）
+
+小提示
+- .env 行格式是 KEY=VALUE，尽量不要加多余空格。若 token 中有 $、空格等特殊字符，可用引号包裹：ADMIN_TOKEN="p@ss$tr0ng!"
+- 优先级：shell 环境变量 > .env > Dockerfile 中 ENV 默认值
+- 想切环境可用：docker compose --env-file ./prod.env up -d
+
+如果你愿意，我也可以把上述 dotenv 支持补到代码里，并更新 requirements.txt。
